@@ -1,12 +1,13 @@
 const pool = require('../config/db');
 const pdfService = require('../services/pdfService');
+
 exports.generateQuittance = async (req, res) => {
   try {
     const [paiements] = await pool.execute(`
       SELECT p.*, 
              c.montant_loyer, 
              c.jour_paiement, 
-             c.charges,
+             c.charges_periode AS charges,
              l.nom AS locataire_nom, 
              l.adresse AS locataire_adresse,
              l.telephone AS locataire_telephone,
@@ -21,7 +22,7 @@ exports.generateQuittance = async (req, res) => {
       JOIN locataires l ON c.locataire_id = l.id
       JOIN biens b ON c.bien_id = b.id
       JOIN proprietaires pr ON b.proprietaire_id = pr.id
-      WHERE p.id = ?
+      WHERE p.id = $1
     `, [req.params.paiement_id]);
 
     if (!paiements.length) {
@@ -33,7 +34,7 @@ exports.generateQuittance = async (req, res) => {
 
     // Enregistrer dans la base de données
     await pool.execute(
-      'INSERT INTO quittances (paiement_id, numero_quittance, fichier_path) VALUES (?, ?, ?)',
+      'INSERT INTO quittances (paiement_id, numero_quittance, fichier_path) VALUES ($1, $2, $3)',
       [req.params.paiement_id, pdf.numeroQuittance, pdf.fileName]
     );
 
@@ -73,7 +74,7 @@ exports.generateAvisEcheance = async (req, res) => {
       JOIN locataires l ON c.locataire_id = l.id
       JOIN biens b ON c.bien_id = b.id
       JOIN proprietaires pr ON b.proprietaire_id = pr.id
-      WHERE c.id = ? AND c.statut = 'actif'
+      WHERE c.id = $1 AND c.statut = 'actif'
     `, [req.params.contrat_id]);
 
     if (!contrats.length) {
@@ -86,7 +87,7 @@ exports.generateAvisEcheance = async (req, res) => {
     // Enregistrer dans la base de données
     const montantDu = Number(contrat.montant_loyer) + Number(contrat.charges || 0);
     await pool.execute(
-      'INSERT INTO avis_echeance (contrat_id, mois_concerne, montant_du, fichier_path) VALUES (?, ?, ?, ?)',
+      'INSERT INTO avis_echeance (contrat_id, mois_concerne, montant_du, fichier_path) VALUES ($1, $2, $3, $4)',
       [req.params.contrat_id, mois_concerne, montantDu, pdf.fileName]
     );
 
@@ -100,6 +101,7 @@ exports.generateAvisEcheance = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
 exports.generateQuittanceCaution = async (req, res) => {
   try {
     const { montant_caution } = req.body || {};
@@ -124,7 +126,7 @@ exports.generateQuittanceCaution = async (req, res) => {
       FROM contrats c
       JOIN locataires l ON c.locataire_id = l.id
       JOIN biens b ON c.bien_id = b.id
-      WHERE c.id = ? AND c.statut = 'actif'
+      WHERE c.id = $1 AND c.statut = 'actif'
     `, [req.params.contrat_id]);
 
     if (!contrats.length) {

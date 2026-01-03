@@ -1,15 +1,12 @@
 const pool = require('../config/db');
-
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
-
 
 exports.createPaiement = async (req, res) => {
   try {
     const { contrat_id, date_paiement, montant_paye, mode_paiement, reference, mois_concerne } = req.body;
 
-    // 🔴 Validation des champs obligatoires
     if (!contrat_id || !date_paiement || !montant_paye || !mode_paiement || !mois_concerne) {
       return res.status(400).json({ 
         error: 'Champs obligatoires manquants',
@@ -24,18 +21,11 @@ exports.createPaiement = async (req, res) => {
     }
 
     const [result] = await pool.execute(
-      'INSERT INTO paiements (contrat_id, date_paiement, montant_paye, mode_paiement, reference, mois_concerne) VALUES (?, ?, ?, ?, ?, ?)',
-      [
-        contrat_id, 
-        date_paiement, 
-        montant_paye, 
-        mode_paiement, 
-        reference || null,  // 🟢 Convertir undefined en null
-        mois_concerne
-      ]
+      'INSERT INTO paiements (contrat_id, date_paiement, montant_paye, mode_paiement, reference, mois_concerne) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
+      [contrat_id, date_paiement, montant_paye, mode_paiement, reference || null, mois_concerne]
     );
 
-    res.status(201).json({ id: result.insertId, message: 'Paiement enregistré avec succès' });
+    res.status(201).json({ id: result[0].id, message: 'Paiement enregistré avec succès' });
   } catch (error) {
     console.error('Erreur création paiement:', error);
     res.status(500).json({ error: error.message });
@@ -62,7 +52,7 @@ exports.getPaiements = async (req, res) => {
 exports.getPaiementsByContrat = async (req, res) => {
   try {
     const [rows] = await pool.execute(
-      'SELECT * FROM paiements WHERE contrat_id = ? ORDER BY date_paiement DESC',
+      'SELECT * FROM paiements WHERE contrat_id = $1 ORDER BY date_paiement DESC',
       [req.params.contrat_id]
     );
     res.json(rows);
@@ -71,46 +61,25 @@ exports.getPaiementsByContrat = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
 exports.updatePaiement = async (req, res) => {
   try {
     const { id } = req.params;
+    const { contrat_id, date_paiement, montant_paye, mode_paiement, reference, mois_concerne } = req.body;
 
-    const {
-      contrat_id,
-      date_paiement,
-      montant_paye,
-      mode_paiement,
-      reference,
-      mois_concerne
-    } = req.body;
-
-    // 🔴 Vérification minimale
     if (!contrat_id || !date_paiement || !montant_paye || !mode_paiement || !mois_concerne) {
       return res.status(400).json({ error: 'Champs obligatoires manquants' });
     }
 
     const [result] = await pool.execute(
       `UPDATE paiements
-       SET contrat_id = ?, 
-           date_paiement = ?, 
-           montant_paye = ?, 
-           mode_paiement = ?, 
-           reference = ?, 
-           mois_concerne = ?
-       WHERE id = ?`,
-      [
-        contrat_id,
-        date_paiement,
-        montant_paye,
-        mode_paiement,
-        reference || null,
-        mois_concerne,
-        id
-      ]
+       SET contrat_id = $1, date_paiement = $2, montant_paye = $3, 
+           mode_paiement = $4, reference = $5, mois_concerne = $6
+       WHERE id = $7`,
+      [contrat_id, date_paiement, montant_paye, mode_paiement, reference || null, mois_concerne, id]
     );
 
-    // 🔴 Si aucun paiement modifié
-    if (result.affectedRows === 0) {
+    if (result.length === 0) {
       return res.status(404).json({ error: 'Paiement introuvable' });
     }
 
@@ -123,17 +92,9 @@ exports.updatePaiement = async (req, res) => {
 
 exports.telechargerHistoriquePDF = async (req, res) => {
   try {
-    // Récupérer tous les paiements
     const [rows] = await pool.execute(`
-      SELECT 
-        p.id,
-        p.date_paiement,
-        p.mois_concerne,
-        p.montant_paye,
-        p.mode_paiement,
-        p.reference,
-        l.nom AS locataire,
-        b.adresse AS bien
+      SELECT p.id, p.date_paiement, p.mois_concerne, p.montant_paye, p.mode_paiement, p.reference,
+             l.nom AS locataire, b.adresse AS bien
       FROM paiements p
       JOIN contrats c ON p.contrat_id = c.id
       JOIN locataires l ON c.locataire_id = l.id
@@ -150,8 +111,6 @@ exports.telechargerHistoriquePDF = async (req, res) => {
     res.setHeader('Content-Disposition', 'attachment; filename=historique_paiements.pdf');
 
     doc.pipe(res);
-
-    // Titre
     doc.fontSize(18).text('Historique des paiements', { align: 'center' });
     doc.moveDown();
 
@@ -168,15 +127,12 @@ exports.telechargerHistoriquePDF = async (req, res) => {
         .text(`Référence : ${p.reference || '—'}`)
         .moveDown();
 
-      // Ajouter une nouvelle page tous les 3 paiements pour la lisibilité
       if ((index + 1) % 3 === 0) doc.addPage();
     });
 
     doc.end();
-
   } catch (error) {
     console.error('Erreur génération PDF :', error);
     res.status(500).json({ error: error.message });
   }
 };
-

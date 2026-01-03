@@ -7,7 +7,6 @@ const pool = require('../config/db');
 
 router.get('/quittances', async (req, res) => {
   try {
-    const pool = require('../config/db');
     const [quittances] = await pool.execute(`
       SELECT q.*, p.mois_concerne, l.nom AS locataire_nom, b.adresse AS bien_adresse
       FROM quittances q
@@ -22,9 +21,9 @@ router.get('/quittances', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 router.get('/avis-echeance', async (req, res) => {
   try {
-    const pool = require('../config/db');
     const [avis] = await pool.execute(`
       SELECT a.*, l.nom AS locataire_nom, b.adresse AS bien_adresse
       FROM avis_echeance a
@@ -38,6 +37,7 @@ router.get('/avis-echeance', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 // Lister toutes les quittances de caution
 router.get('/quittances-caution', async (req, res) => {
   try {
@@ -54,6 +54,7 @@ router.get('/quittances-caution', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 // Route pour récupérer les échéances impayées (après le 10 du mois)
 router.get('/echeances-impayees', authenticate, isAdmin, async (req, res) => {
   try {
@@ -84,9 +85,9 @@ router.get('/echeances-impayees', authenticate, isAdmin, async (req, res) => {
         l.telephone,
         l.email,
         b.adresse as bien_adresse,
-        c.montant_loyer + COALESCE(c.charges, 0) as montant_du,
-        ? as mois_concerne,
-        ? as jours_retard,
+        c.montant_loyer + COALESCE(c.charges_periode, 0) as montant_du,
+        $1 as mois_concerne,
+        $2 as jours_retard,
         r.id as rappel_id,
         r.date_envoi as rappel_date_envoi,
         r.lu as rappel_lu,
@@ -94,11 +95,11 @@ router.get('/echeances-impayees', authenticate, isAdmin, async (req, res) => {
       FROM contrats c
       JOIN locataires l ON c.locataire_id = l.id
       JOIN biens b ON c.bien_id = b.id
-      LEFT JOIN paiements p ON c.id = p.contrat_id AND p.mois_concerne = ?
-      LEFT JOIN rappels_paiement r ON c.id = r.contrat_id AND r.mois_concerne = ?
+      LEFT JOIN paiements p ON c.id = p.contrat_id AND p.mois_concerne = $3
+      LEFT JOIN rappels_paiement r ON c.id = r.contrat_id AND r.mois_concerne = $4
       WHERE c.statut = 'actif'
         AND p.id IS NULL
-      ORDER BY r.lu ASC, l.nom ASC
+      ORDER BY r.lu ASC NULLS FIRST, l.nom ASC
     `, [moisConcerne, joursRetard, moisConcerne, moisConcerne]);
 
     console.log('📊 Nombre d\'échéances trouvées:', echeances.length);
@@ -109,7 +110,7 @@ router.get('/echeances-impayees', authenticate, isAdmin, async (req, res) => {
       id: `${e.contrat_id}-${moisConcerne}`,
       montant_du: Number(e.montant_du),
       rappel_envoye: !!e.rappel_id,
-      rappel_lu: e.rappel_lu === 1 || e.rappel_lu === true,
+      rappel_lu: e.rappel_lu === true,
       rappel_date: e.rappel_date_envoi
     }));
 
@@ -121,7 +122,6 @@ router.get('/echeances-impayees', authenticate, isAdmin, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
 
 // Route pour envoyer un rappel
 router.post('/envoyer-rappel', authenticate, isAdmin, async (req, res) => {
@@ -137,7 +137,7 @@ router.post('/envoyer-rappel', authenticate, isAdmin, async (req, res) => {
     // Enregistrer le rappel dans la base
     await pool.execute(`
       INSERT INTO rappels_paiement (contrat_id, mois_concerne, date_envoi, message, type, lu)
-      VALUES (?, ?, NOW(), ?, 'retard', FALSE)
+      VALUES ($1, $2, CURRENT_TIMESTAMP, $3, 'retard', FALSE)
     `, [contrat_id, mois_concerne, message || null]);
 
     console.log('✅ Rappel enregistré avec succès');
@@ -149,15 +149,8 @@ router.post('/envoyer-rappel', authenticate, isAdmin, async (req, res) => {
   }
 });
 
-
 router.post('/quittance/:paiement_id', pdfController.generateQuittance);
 router.post('/avis-echeance/:contrat_id', pdfController.generateAvisEcheance);
 router.post('/quittance-caution/:contrat_id', pdfController.generateQuittanceCaution);
-
-// Lister toutes les quittances
-
-
-// Lister tous les avis d'échéance
-
 
 module.exports = router;

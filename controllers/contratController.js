@@ -23,7 +23,7 @@ exports.createContrat = async (req, res) => {
 
     // 🔹 Récupérer le type du locataire
     const [[locataire]] = await connection.execute(
-      'SELECT type FROM locataires WHERE id = ?',
+      'SELECT type FROM locataires WHERE id = $1',
       [locataire_id]
     );
 
@@ -44,7 +44,8 @@ exports.createContrat = async (req, res) => {
         charges_structurelles, charges_periode,
         montant_eau, montant_internet, tva,
         statut
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'actif')
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'actif')
+      RETURNING id
     `, [
       bien_id,
       locataire_id,
@@ -61,14 +62,14 @@ exports.createContrat = async (req, res) => {
     ]);
 
     await connection.execute(
-      'UPDATE biens SET statut = "loue" WHERE id = ?',
-      [bien_id]
+      'UPDATE biens SET statut = $1 WHERE id = $2',
+      ['loue', bien_id]
     );
 
     await connection.commit();
 
     res.status(201).json({
-      id: result.insertId,
+      id: result[0].id,
       message: 'Contrat créé avec succès'
     });
 
@@ -80,17 +81,16 @@ exports.createContrat = async (req, res) => {
   }
 };
 
-
-
 exports.getContratsActifs = async (req, res) => {
   try {
-    const [rows] = await pool.execute('SELECT * FROM vue_contrats_complets WHERE contrat_statut = "actif"');
+    const [rows] = await pool.execute('SELECT * FROM vue_contrats_complets WHERE contrat_statut = $1', ['actif']);
     res.json(rows);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
   }
 };
+
 exports.updateContrat = async (req, res) => {
   console.log('PARAMS REÇUS:', req.params);
 
@@ -124,7 +124,7 @@ exports.updateContrat = async (req, res) => {
       `SELECT c.*, l.type AS locataire_type
        FROM contrats c
        LEFT JOIN locataires l ON c.locataire_id = l.id
-       WHERE c.id = ?`,
+       WHERE c.id = $1`,
       [contratId]
     );
 
@@ -138,19 +138,20 @@ exports.updateContrat = async (req, res) => {
     // 🧩 Construction dynamique
     const updates = [];
     const values = [];
+    let paramIndex = 1;
 
     if (date_fin != null) {
-      updates.push('date_fin = ?');
+      updates.push(`date_fin = $${paramIndex++}`);
       values.push(date_fin);
     }
 
     if (montant_loyer != null) {
-      updates.push('montant_loyer = ?');
+      updates.push(`montant_loyer = $${paramIndex++}`);
       values.push(montant_loyer);
     }
 
     if (montant_caution != null) {
-      updates.push('montant_caution = ?');
+      updates.push(`montant_caution = $${paramIndex++}`);
       values.push(montant_caution);
     }
 
@@ -158,32 +159,32 @@ exports.updateContrat = async (req, res) => {
       if (jour_paiement < 1 || jour_paiement > 31) {
         throw new Error('Jour de paiement invalide (1–31)');
       }
-      updates.push('jour_paiement = ?');
+      updates.push(`jour_paiement = $${paramIndex++}`);
       values.push(jour_paiement);
     }
 
     if (charges_structurelles != null) {
-      updates.push('charges_structurelles = ?');
+      updates.push(`charges_structurelles = $${paramIndex++}`);
       values.push(charges_structurelles);
     }
 
     if (charges_periode != null) {
-      updates.push('charges_periode = ?');
+      updates.push(`charges_periode = $${paramIndex++}`);
       values.push(charges_periode);
     }
 
     if (montant_eau != null) {
-      updates.push('montant_eau = ?');
+      updates.push(`montant_eau = $${paramIndex++}`);
       values.push(montant_eau);
     }
 
     // 🔒 Règles métier
     const internetFinal = isCommerce ? 0 : (montant_internet || 0);
-    updates.push('montant_internet = ?');
+    updates.push(`montant_internet = $${paramIndex++}`);
     values.push(internetFinal);
 
     const tvaFinal = isCommerce ? (tva || 0) : 0;
-    updates.push('tva = ?');
+    updates.push(`tva = $${paramIndex++}`);
     values.push(tvaFinal);
 
     if (statut != null) {
@@ -192,7 +193,7 @@ exports.updateContrat = async (req, res) => {
         throw new Error('Statut invalide');
       }
 
-      updates.push('statut = ?');
+      updates.push(`statut = $${paramIndex++}`);
       values.push(statut);
 
       // Libérer le bien si fin de contrat
@@ -201,8 +202,8 @@ exports.updateContrat = async (req, res) => {
         contrat.statut === 'actif'
       ) {
         await connection.execute(
-          'UPDATE biens SET statut = "disponible" WHERE id = ?',
-          [contrat.bien_id]
+          'UPDATE biens SET statut = $1 WHERE id = $2',
+          ['disponible', contrat.bien_id]
         );
       }
     }
@@ -215,7 +216,7 @@ exports.updateContrat = async (req, res) => {
     values.push(contratId);
 
     await connection.execute(
-      `UPDATE contrats SET ${updates.join(', ')} WHERE id = ?`,
+      `UPDATE contrats SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
       values
     );
 
@@ -230,6 +231,7 @@ exports.updateContrat = async (req, res) => {
     connection.release();
   }
 };
+
 exports.archiverContrat = async (req, res) => {
   const connection = await pool.getConnection();
 
@@ -244,7 +246,7 @@ exports.archiverContrat = async (req, res) => {
 
     // Vérifier que le contrat existe et n'est pas déjà archivé
     const [[contrat]] = await connection.execute(
-      'SELECT * FROM contrats WHERE id = ?',
+      'SELECT * FROM contrats WHERE id = $1',
       [contratId]
     );
 
@@ -253,7 +255,7 @@ exports.archiverContrat = async (req, res) => {
       return res.status(404).json({ error: 'Contrat introuvable' });
     }
 
-    if (contrat.archive === 1) {
+    if (contrat.archive === true) {
       await connection.rollback();
       return res.status(400).json({ error: 'Ce contrat est déjà archivé' });
     }
@@ -262,20 +264,20 @@ exports.archiverContrat = async (req, res) => {
     await connection.execute(
       `UPDATE contrats 
        SET archive = TRUE, 
-           date_archive = NOW(),
+           date_archive = CURRENT_TIMESTAMP,
            statut = CASE 
              WHEN statut = 'actif' THEN 'termine'
              ELSE statut
            END
-       WHERE id = ?`,
+       WHERE id = $1`,
       [contratId]
     );
 
     // Libérer le bien si le contrat était actif
     if (contrat.statut === 'actif') {
       await connection.execute(
-        'UPDATE biens SET statut = "disponible" WHERE id = ?',
-        [contrat.bien_id]
+        'UPDATE biens SET statut = $1 WHERE id = $2',
+        ['disponible', contrat.bien_id]
       );
     }
 
@@ -291,7 +293,6 @@ exports.archiverContrat = async (req, res) => {
   }
 };
 
-// Désarchiver un contrat
 exports.desarchiverContrat = async (req, res) => {
   const connection = await pool.getConnection();
 
@@ -306,7 +307,7 @@ exports.desarchiverContrat = async (req, res) => {
 
     // Vérifier que le contrat existe et est archivé
     const [[contrat]] = await connection.execute(
-      'SELECT * FROM contrats WHERE id = ?',
+      'SELECT * FROM contrats WHERE id = $1',
       [contratId]
     );
 
@@ -315,14 +316,14 @@ exports.desarchiverContrat = async (req, res) => {
       return res.status(404).json({ error: 'Contrat introuvable' });
     }
 
-    if (contrat.archive === 0) {
+    if (contrat.archive === false) {
       await connection.rollback();
       return res.status(400).json({ error: 'Ce contrat n\'est pas archivé' });
     }
 
     // Désarchiver le contrat
     await connection.execute(
-      'UPDATE contrats SET archive = FALSE, date_archive = NULL WHERE id = ?',
+      'UPDATE contrats SET archive = FALSE, date_archive = NULL WHERE id = $1',
       [contratId]
     );
 
@@ -338,7 +339,6 @@ exports.desarchiverContrat = async (req, res) => {
   }
 };
 
-// Obtenir les contrats archivés
 exports.getContratsArchives = async (req, res) => {
   try {
     const [rows] = await pool.execute(

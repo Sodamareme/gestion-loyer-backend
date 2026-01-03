@@ -6,8 +6,9 @@ exports.generateNumeroDocument = async (type) => {
   try {
     await connection.beginTransaction();
 
+    // PostgreSQL utilise FOR UPDATE pour verrouiller les lignes
     const [rows] = await connection.execute(
-      'SELECT dernier_numero FROM document_compteurs WHERE type_document = ? FOR UPDATE',
+      'SELECT dernier_numero FROM document_compteurs WHERE type_document = $1 FOR UPDATE',
       [type]
     );
 
@@ -18,7 +19,7 @@ exports.generateNumeroDocument = async (type) => {
     const next = rows[0].dernier_numero + 1;
 
     await connection.execute(
-      'UPDATE document_compteurs SET dernier_numero = ? WHERE type_document = ?',
+      'UPDATE document_compteurs SET dernier_numero = $1 WHERE type_document = $2',
       [next, type]
     );
 

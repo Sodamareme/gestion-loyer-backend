@@ -1,5 +1,4 @@
 const pool = require('../config/db');
-
 const bcrypt = require('bcrypt');
 
 exports.createLocataire = async (req, res) => {
@@ -20,11 +19,11 @@ exports.createLocataire = async (req, res) => {
 
     // 1. Créer le locataire
     const [resultLocataire] = await connection.execute(
-      'INSERT INTO locataires (nom, telephone, email, type) VALUES (?, ?, ?, ?)',
+      'INSERT INTO locataires (nom, telephone, email, type) VALUES ($1, $2, $3, $4) RETURNING id',
       [nom, telephone, email, type]
     );
 
-    const locataireId = resultLocataire.insertId;
+    const locataireId = resultLocataire[0].id;
 
     // 2. Créer automatiquement le compte utilisateur
     // Mot de passe par défaut = téléphone (ou autre logique)
@@ -32,7 +31,7 @@ exports.createLocataire = async (req, res) => {
     const hashedPassword = await bcrypt.hash(defaultPassword, 10);
 
     await connection.execute(
-      'INSERT INTO users (email, password, role, locataire_id, is_active) VALUES (?, ?, ?, ?, ?)',
+      'INSERT INTO users (email, password, role, locataire_id, is_active) VALUES ($1, $2, $3, $4, $5)',
       [email, hashedPassword, 'locataire', locataireId, true]
     );
 
@@ -52,8 +51,8 @@ exports.createLocataire = async (req, res) => {
     await connection.rollback();
     console.error(error);
     
-    // Gestion des doublons
-    if (error.code === 'ER_DUP_ENTRY') {
+    // Gestion des doublons PostgreSQL
+    if (error.code === '23505') { // unique_violation
       return res.status(400).json({ error: 'Email déjà utilisé' });
     }
     
@@ -74,7 +73,7 @@ exports.updateLocataire = async (req, res) => {
     
     // Récupérer l'ancien email
     const [[oldLocataire]] = await connection.execute(
-      'SELECT email FROM locataires WHERE id = ?',
+      'SELECT email FROM locataires WHERE id = $1',
       [locataireId]
     );
     
@@ -85,14 +84,14 @@ exports.updateLocataire = async (req, res) => {
 
     // Mettre à jour le locataire
     await connection.execute(
-      'UPDATE locataires SET nom = ?, telephone = ?, email = ?, type = ? WHERE id = ?',
+      'UPDATE locataires SET nom = $1, telephone = $2, email = $3, type = $4 WHERE id = $5',
       [nom, telephone, email, type, locataireId]
     );
 
     // Si l'email a changé, mettre à jour le compte utilisateur
     if (oldLocataire.email !== email) {
       await connection.execute(
-        'UPDATE users SET email = ? WHERE locataire_id = ?',
+        'UPDATE users SET email = $1 WHERE locataire_id = $2',
         [email, locataireId]
       );
     }
@@ -104,7 +103,7 @@ exports.updateLocataire = async (req, res) => {
     await connection.rollback();
     console.error(error);
     
-    if (error.code === 'ER_DUP_ENTRY') {
+    if (error.code === '23505') { // unique_violation
       return res.status(400).json({ error: 'Email déjà utilisé' });
     }
     
@@ -113,8 +112,6 @@ exports.updateLocataire = async (req, res) => {
     connection.release();
   }
 };
-
-
 
 exports.getLocataires = async (req, res) => {
   try {
@@ -128,7 +125,7 @@ exports.getLocataires = async (req, res) => {
 
 exports.getLocataireById = async (req, res) => {
   try {
-    const [rows] = await pool.execute('SELECT * FROM locataires WHERE id = ?', [req.params.id]);
+    const [rows] = await pool.execute('SELECT * FROM locataires WHERE id = $1', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Locataire non trouvé' });
     res.json(rows[0]);
   } catch (error) {
@@ -136,5 +133,3 @@ exports.getLocataireById = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
-
-

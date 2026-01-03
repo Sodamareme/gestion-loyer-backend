@@ -32,6 +32,7 @@ const upload = multer({
     cb(new Error('Seules les images (JPEG, JPG, PNG) sont acceptées'));
   }
 });
+
 // 🆕 NOUVELLE ROUTE : Obtenir TOUS les contrats du locataire (pour multi-logements)
 router.get('/mes-contrats', authenticate, isLocataire, async (req, res) => {
   try {
@@ -39,7 +40,7 @@ router.get('/mes-contrats', authenticate, isLocataire, async (req, res) => {
       `SELECT c.*, b.adresse as bien_adresse, b.type as bien_type
        FROM contrats c
        JOIN biens b ON c.bien_id = b.id
-       WHERE c.locataire_id = ? AND c.statut = 'actif'
+       WHERE c.locataire_id = $1 AND c.statut = 'actif'
        ORDER BY c.id ASC`,
       [req.user.locataire_id]
     );
@@ -50,6 +51,7 @@ router.get('/mes-contrats', authenticate, isLocataire, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 // Obtenir le contrat actif du locataire
 router.get('/mon-contrat', authenticate, isLocataire, async (req, res) => {
   try {
@@ -57,7 +59,7 @@ router.get('/mon-contrat', authenticate, isLocataire, async (req, res) => {
       `SELECT c.*, b.adresse as bien_adresse, b.type as bien_type
        FROM contrats c
        JOIN biens b ON c.bien_id = b.id
-       WHERE c.locataire_id = ? AND c.statut = 'actif'
+       WHERE c.locataire_id = $1 AND c.statut = 'actif'
        LIMIT 1`,
       [req.user.locataire_id]
     );
@@ -93,7 +95,7 @@ router.post('/soumettre-paiement',
 
       // Vérifier que le contrat appartient au locataire connecté
       const [[contrat]] = await pool.execute(
-        'SELECT * FROM contrats WHERE id = ? AND locataire_id = ?',
+        'SELECT * FROM contrats WHERE id = $1 AND locataire_id = $2',
         [contrat_id, req.user.locataire_id]
       );
 
@@ -108,18 +110,19 @@ router.post('/soumettre-paiement',
       const [result] = await pool.execute(
         `INSERT INTO paiements 
          (contrat_id, date_paiement, montant_paye, mode_paiement, mois_concerne, photo_eau, photo_paiement)
-         VALUES (?, NOW(), ?, ?, ?, ?, ?)`,
+         VALUES ($1, CURRENT_TIMESTAMP, $2, $3, $4, $5, $6)
+         RETURNING id`,
         [contrat_id, montant_paye, mode_paiement, mois_concerne, photo_eau, photo_paiement]
       );
 
       // Mettre à jour l'index eau dans le contrat
       await pool.execute(
-        'UPDATE contrats SET nouvel_index_eau = ?, date_releve_eau = ? WHERE id = ?',
+        'UPDATE contrats SET nouvel_index_eau = $1, date_releve_eau = $2 WHERE id = $3',
         [nouvel_index_eau, date_releve_eau, contrat_id]
       );
 
       res.status(201).json({
-        id: result.insertId,
+        id: result[0].id,
         message: 'Paiement soumis avec succès',
         photo_eau,
         photo_paiement
@@ -135,7 +138,7 @@ router.post('/generer-quittance/:paiement_id', authenticate, isLocataire, async 
   try {
     const [paiements] = await pool.execute(`
       SELECT p.*, 
-             c.montant_loyer, c.charges, c.charges_structurelles,
+             c.montant_loyer, c.charges_periode as charges, c.charges_structurelles,
              c.montant_eau, c.montant_internet, c.tva,
              c.ancien_index_eau, c.nouvel_index_eau, c.date_releve_eau,
              l.nom AS locataire_nom, 
@@ -144,7 +147,7 @@ router.post('/generer-quittance/:paiement_id', authenticate, isLocataire, async 
       JOIN contrats c ON p.contrat_id = c.id
       JOIN locataires l ON c.locataire_id = l.id
       JOIN biens b ON c.bien_id = b.id
-      WHERE p.id = ? AND l.id = ?
+      WHERE p.id = $1 AND l.id = $2
     `, [req.params.paiement_id, req.user.locataire_id]);
 
     if (!paiements.length) {
@@ -171,7 +174,7 @@ router.get('/mes-paiements', authenticate, isLocataire, async (req, res) => {
        FROM paiements p
        JOIN contrats c ON p.contrat_id = c.id
        JOIN biens b ON c.bien_id = b.id
-       WHERE c.locataire_id = ?
+       WHERE c.locataire_id = $1
        ORDER BY p.date_paiement DESC`,
       [req.user.locataire_id]
     );
@@ -205,12 +208,12 @@ router.get('/mes-echeances', authenticate, isLocataire, async (req, res) => {
       const [echeancesData] = await pool.execute(`
         SELECT 
           c.id as contrat_id,
-          c.montant_loyer + COALESCE(c.charges, 0) as montant_du,
-          ? as mois_concerne,
-          ? as jours_retard
+          c.montant_loyer + COALESCE(c.charges_periode, 0) as montant_du,
+          $1 as mois_concerne,
+          $2 as jours_retard
         FROM contrats c
-        LEFT JOIN paiements p ON c.id = p.contrat_id AND p.mois_concerne = ?
-        WHERE c.locataire_id = ?
+        LEFT JOIN paiements p ON c.id = p.contrat_id AND p.mois_concerne = $3
+        WHERE c.locataire_id = $4
           AND c.statut = 'actif'
           AND p.id IS NULL
       `, [moisConcerne, joursRetard, moisConcerne, req.user.locataire_id]);
@@ -235,11 +238,11 @@ router.get('/mes-echeances', authenticate, isLocataire, async (req, res) => {
         r.message,
         r.type,
         r.lu,
-        c.montant_loyer + COALESCE(c.charges, 0) as montant_du,
-        DATEDIFF(NOW(), r.date_envoi) as jours_depuis_rappel
+        c.montant_loyer + COALESCE(c.charges_periode, 0) as montant_du,
+        EXTRACT(DAY FROM (CURRENT_TIMESTAMP - r.date_envoi)) as jours_depuis_rappel
       FROM rappels_paiement r
       JOIN contrats c ON r.contrat_id = c.id
-      WHERE c.locataire_id = ?
+      WHERE c.locataire_id = $1
         AND r.lu = FALSE
       ORDER BY r.date_envoi DESC
     `, [req.user.locataire_id]);
@@ -284,10 +287,13 @@ router.get('/mes-echeances', authenticate, isLocataire, async (req, res) => {
       let defaultMessage = `📧 Rappel du propriétaire : Votre loyer n'a pas encore été reçu. Merci de régulariser votre situation.`;
       const message = r.message || defaultMessage;
       
+      // Arrondir les jours pour PostgreSQL EXTRACT
+      const joursDepuis = Math.floor(r.jours_depuis_rappel || 0);
+      
       notifications.push({
         id: `rappel-${r.id}`,
         type: r.type === 'retard' ? 'danger' : 'warning',
-        message: `${message} (Rappel envoyé il y a ${r.jours_depuis_rappel} jour${r.jours_depuis_rappel > 1 ? 's' : ''})`,
+        message: `${message} (Rappel envoyé il y a ${joursDepuis} jour${joursDepuis > 1 ? 's' : ''})`,
         montant: Number(r.montant_du),
         joursRetard: 0,
         moisConcerne: r.mois_concerne,
@@ -317,7 +323,7 @@ router.post('/marquer-rappel-lu/:rappel_id', authenticate, isLocataire, async (r
       SELECT r.* 
       FROM rappels_paiement r
       JOIN contrats c ON r.contrat_id = c.id
-      WHERE r.id = ? AND c.locataire_id = ?
+      WHERE r.id = $1 AND c.locataire_id = $2
     `, [rappelId, req.user.locataire_id]);
 
     if (rappels.length === 0) {
@@ -326,7 +332,7 @@ router.post('/marquer-rappel-lu/:rappel_id', authenticate, isLocataire, async (r
 
     // Marquer comme lu
     await pool.execute(
-      'UPDATE rappels_paiement SET lu = TRUE WHERE id = ?',
+      'UPDATE rappels_paiement SET lu = TRUE WHERE id = $1',
       [rappelId]
     );
 
@@ -336,8 +342,5 @@ router.post('/marquer-rappel-lu/:rappel_id', authenticate, isLocataire, async (r
     res.status(500).json({ error: error.message });
   }
 });
-
-// Réinitialiser le mot de passe (admin uniquement)
-
 
 module.exports = router;

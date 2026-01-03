@@ -21,7 +21,7 @@ async function genererNumeroBien(type) {
   const [rows] = await pool.execute(
     `SELECT numero_bien 
      FROM biens 
-     WHERE type = ? 
+     WHERE type = $1
      ORDER BY id DESC 
      LIMIT 1`,
     [type]
@@ -71,7 +71,7 @@ exports.createBien = async (req, res) => {
 
     // ✅ Vérifier que le propriétaire existe
     const [proprietaire] = await pool.execute(
-      'SELECT id FROM proprietaires WHERE id = ?',
+      'SELECT id FROM proprietaires WHERE id = $1',
       [proprietaire_id]
     );
 
@@ -84,7 +84,8 @@ exports.createBien = async (req, res) => {
     const [result] = await pool.execute(
       `INSERT INTO biens 
       (numero_bien, proprietaire_id, adresse, type, surface, nombre_pieces, description, statut)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'disponible')`,
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'disponible')
+      RETURNING id`,
       [
         numero_bien,
         proprietaire_id,
@@ -97,7 +98,7 @@ exports.createBien = async (req, res) => {
     );
 
     res.status(201).json({
-      id: result.insertId,
+      id: result[0].id,
       numero_bien,
       message: 'Bien créé avec succès'
     });
@@ -163,7 +164,7 @@ exports.updateBien = async (req, res) => {
 
     // Vérifier que le bien existe
     const [existing] = await pool.execute(
-      'SELECT * FROM biens WHERE id = ?',
+      'SELECT * FROM biens WHERE id = $1',
       [id]
     );
 
@@ -174,25 +175,26 @@ exports.updateBien = async (req, res) => {
     // Construire la requête dynamiquement selon les champs fournis
     const updates = [];
     const values = [];
+    let paramIndex = 1;
 
     if (adresse !== undefined) {
-      updates.push('adresse = ?');
+      updates.push(`adresse = $${paramIndex++}`);
       values.push(adresse);
     }
     if (surface !== undefined) {
-      updates.push('surface = ?');
+      updates.push(`surface = $${paramIndex++}`);
       values.push(surface);
     }
     if (nombre_pieces !== undefined) {
-      updates.push('nombre_pieces = ?');
+      updates.push(`nombre_pieces = $${paramIndex++}`);
       values.push(nombre_pieces);
     }
     if (description !== undefined) {
-      updates.push('description = ?');
+      updates.push(`description = $${paramIndex++}`);
       values.push(description);
     }
     if (statut !== undefined) {
-      updates.push('statut = ?');
+      updates.push(`statut = $${paramIndex++}`);
       values.push(statut);
     }
 
@@ -206,11 +208,11 @@ exports.updateBien = async (req, res) => {
 
     // Exécuter la mise à jour
     const [result] = await pool.execute(
-      `UPDATE biens SET ${updates.join(', ')} WHERE id = ?`,
+      `UPDATE biens SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
       values
     );
 
-    if (result.affectedRows === 0) {
+    if (result.length === 0) {
       return res.status(404).json({ error: 'Bien introuvable' });
     }
 
@@ -221,6 +223,7 @@ exports.updateBien = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
 // ===================================================
 // 🔹 SUPPRIMER UN BIEN
 // ===================================================
@@ -230,7 +233,7 @@ exports.deleteBien = async (req, res) => {
 
     // ⚠️ Sécurité métier : ne pas supprimer si loué
     const [rows] = await pool.execute(
-      `SELECT statut FROM biens WHERE id = ?`,
+      `SELECT statut FROM biens WHERE id = $1`,
       [id]
     );
 
@@ -245,7 +248,7 @@ exports.deleteBien = async (req, res) => {
     }
 
     await pool.execute(
-      `DELETE FROM biens WHERE id = ?`,
+      `DELETE FROM biens WHERE id = $1`,
       [id]
     );
 
