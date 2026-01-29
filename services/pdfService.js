@@ -680,3 +680,286 @@ exports.generateQuittanceCaution = async (contrat, montantCaution) => {
     }
   });
 };
+exports.generateContrat = async (contrat) => {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const PDFDocument = require('pdfkit');
+      const fs = require('fs');
+      const path = require('path');
+      const { generateNumeroDocument } = require('./numeroService');
+      
+      const doc = new PDFDocument({ margin: 0, size: 'A4' });
+      
+      const numeroContrat = await generateNumeroDocument('CT');
+      const codeReference = generateReference();
+      
+      const dir = ensureDocumentsFolder();
+      const fileName = `contrat_${numeroContrat}.pdf`;
+      const filePath = path.join(dir, fileName);
+
+      const stream = fs.createWriteStream(filePath);
+      doc.pipe(stream);
+
+      let y = drawHeader(doc, 'CONTRAT DE LOCATION', numeroContrat);
+      
+      // Informations générales
+      y = drawSectionTitle(doc, 'INFORMATIONS GENERALES', y);
+      
+      y = drawInfoRow(doc, 'Date debut', formatDate(contrat.date_debut), y, true);
+      y = drawInfoRow(doc, 'Date fin', formatDate(contrat.date_fin), y, true);
+      y = drawInfoRow(doc, 'Reference', codeReference, y);
+      
+      const dureeEnMois = Math.round(
+        (new Date(contrat.date_fin) - new Date(contrat.date_debut)) / (1000 * 60 * 60 * 24 * 30)
+      );
+      y = drawInfoRow(doc, 'Duree', `${dureeEnMois} mois`, y);
+      
+      y += 8;
+      y = drawSeparator(doc, y, true);
+      
+      // Le bailleur (Propriétaire)
+      y = drawSectionTitle(doc, 'LE BAILLEUR (PROPRIETAIRE)', y);
+      
+      y = drawInfoRow(doc, 'Nom', contrat.proprietaire_nom || '', y);
+      if (contrat.proprietaire_tel) {
+        y = drawInfoRow(doc, 'Telephone', contrat.proprietaire_tel, y);
+      }
+      if (contrat.agence_nom) {
+        y = drawInfoRow(doc, 'Agence', contrat.agence_nom + (contrat.agence_code ? ` (${contrat.agence_code})` : ''), y);
+      }
+      
+      y += 8;
+      y = drawSeparator(doc, y, true);
+      
+      // Le locataire
+      y = drawSectionTitle(doc, 'LE LOCATAIRE', y);
+      
+      const locataireNom = [contrat.locataire_nom, contrat.locataire_prenom].filter(Boolean).join(' ');
+      y = drawInfoRow(doc, 'Nom', locataireNom || '', y);
+      y = drawInfoRow(doc, 'Telephone', contrat.locataire_tel || '', y);
+      if (contrat.locataire_email) {
+        y = drawInfoRow(doc, 'Email', contrat.locataire_email, y);
+      }
+      y = drawInfoRow(doc, 'Type', (contrat.locataire_type || 'particulier').toUpperCase(), y);
+      
+      y += 8;
+      y = drawSeparator(doc, y, true);
+      
+      // Le bien loué
+      y = drawSectionTitle(doc, 'LE BIEN LOUE', y);
+      
+      y = drawInfoRow(doc, 'Adresse', contrat.bien_adresse || '', y, true);
+      if (contrat.bien_numero) {
+        y = drawInfoRow(doc, 'Numero bien', contrat.bien_numero, y);
+      }
+      if (contrat.bien_type) {
+        y = drawInfoRow(doc, 'Type', contrat.bien_type.toUpperCase(), y);
+      }
+      
+      y += 8;
+      y = drawSeparator(doc, y, true);
+      
+      // Conditions financières
+      y = drawSectionTitle(doc, 'CONDITIONS FINANCIERES', y);
+      
+      const montantLoyer = Number(contrat.montant_loyer) || 0;
+      const chargesStruct = Number(contrat.charges_structurelles) || 0;
+      const chargesPeriode = Number(contrat.charges_periode) || 0;
+      const eau = Number(contrat.montant_eau) || 0;
+      const internet = Number(contrat.montant_internet) || 0;
+      const tva = Number(contrat.tva) || 0;
+      const caution = Number(contrat.montant_caution) || 0;
+      
+      const rows = [
+        { label: 'Loyer mensuel', amount: montantLoyer }
+      ];
+      
+      if (chargesStruct > 0) {
+        rows.push({ label: 'Charges structurelles', amount: chargesStruct });
+      }
+      if (chargesPeriode > 0) {
+        rows.push({ label: 'Charges de periode', amount: chargesPeriode });
+      }
+      if (eau > 0) {
+        rows.push({ label: 'Eau (forfait)', amount: eau });
+      }
+      if (internet > 0 && contrat.locataire_type === 'particulier') {
+        rows.push({ label: 'Internet', amount: internet });
+      }
+      if (tva > 0 && contrat.locataire_type === 'commerce') {
+        rows.push({ label: 'TVA', amount: tva });
+      }
+      
+      const totalMensuel = montantLoyer + chargesStruct + chargesPeriode + eau + internet + tva;
+      
+      y = drawTable(doc, ['DESIGNATION', 'MONTANT (FCFA)'], rows, y, { 
+        label: 'TOTAL MENSUEL', 
+        amount: totalMensuel 
+      });
+      
+      // Caution
+      if (caution > 0) {
+        y = drawSectionTitle(doc, 'DEPOT DE GARANTIE', y);
+        
+        y = drawTable(doc, ['', ''], [
+          { label: 'CAUTION VERSEE', amount: caution, bold: true, color: COLORS.primary }
+        ], y);
+      }
+      
+      // Modalités de paiement
+      y += 5;
+      y = drawSeparator(doc, y, true);
+      
+      y = drawSectionTitle(doc, 'MODALITES DE PAIEMENT', y);
+      
+      y = drawInfoRow(doc, 'Jour de paiement', `Le ${contrat.jour_paiement} de chaque mois`, y, true);
+      y = drawInfoRow(doc, 'Mode', 'Selon accord entre les parties', y);
+      
+      y += 8;
+      
+      // Vérifier si on a besoin d'une nouvelle page
+      if (y > 650) {
+        doc.addPage();
+        y = 40;
+      }
+      
+      y = drawSeparator(doc, y, true);
+      
+      // Clauses du contrat
+      y = drawSectionTitle(doc, 'CLAUSES PRINCIPALES', y);
+      
+      const clauses = [
+        {
+          titre: 'Article 1 - Objet',
+          texte: `Le bailleur loue au locataire le bien situe a l'adresse mentionnee ci-dessus, pour un usage d'${contrat.locataire_type === 'commerce' ? 'activite commerciale' : 'habitation'}.`
+        },
+        {
+          titre: 'Article 2 - Duree',
+          texte: `Le present bail est consenti pour une duree de ${dureeEnMois} mois, debutant le ${formatDate(contrat.date_debut)} et se terminant le ${formatDate(contrat.date_fin)}.`
+        },
+        {
+          titre: 'Article 3 - Loyer',
+          texte: `Le loyer mensuel est fixe a ${formatMoney(totalMensuel)} FCFA, payable le ${contrat.jour_paiement} de chaque mois.`
+        },
+        {
+          titre: 'Article 4 - Depot de garantie',
+          texte: caution > 0 
+            ? `Un depot de garantie de ${formatMoney(caution)} FCFA a ete verse par le locataire. Il sera restitue en fin de bail deduction faite des eventuelles reparations.`
+            : 'Aucun depot de garantie n\'est requis pour ce bail.'
+        },
+        {
+          titre: 'Article 5 - Charges',
+          texte: eau > 0 
+            ? 'Les charges incluent l\'eau en forfait. Le locataire s\'engage a utiliser l\'eau de maniere raisonnable.'
+            : 'Le locataire est responsable du paiement des charges selon sa consommation.'
+        },
+        {
+          titre: 'Article 6 - Entretien',
+          texte: 'Le locataire s\'engage a entretenir le bien en bon pere de famille et a effectuer les reparations locatives.'
+        },
+        {
+          titre: 'Article 7 - Resiliation',
+          texte: 'Chaque partie peut resilier le bail moyennant un preavis de trois (3) mois par lettre recommandee.'
+        }
+      ];
+      
+      clauses.forEach((clause, index) => {
+        // Vérifier si on a assez d'espace
+        if (y > 700) {
+          doc.addPage();
+          y = 40;
+        }
+        
+        doc.fontSize(9)
+           .font(FONTS.bold)
+           .fillColor(COLORS.primary)
+           .text(clause.titre, 35, y);
+        
+        y += 16;
+        
+        doc.fontSize(8)
+           .font(FONTS.regular)
+           .fillColor(COLORS.dark)
+           .text(clause.texte, 35, y, { 
+             width: doc.page.width - 70,
+             align: 'justify'
+           });
+        
+        y += doc.heightOfString(clause.texte, { 
+          width: doc.page.width - 70,
+          align: 'justify'
+        }) + 12;
+      });
+      
+      // Vérifier si on a besoin d'une nouvelle page pour les signatures
+      if (y > 650) {
+        doc.addPage();
+        y = 40;
+      }
+      
+      y = drawSeparator(doc, y, true);
+      
+      // Signatures
+      y = drawSectionTitle(doc, 'SIGNATURES', y);
+      
+      const col1X = 50;
+      const col2X = 320;
+      
+      doc.fontSize(8)
+         .font(FONTS.bold)
+         .fillColor(COLORS.dark)
+         .text('LE BAILLEUR', col1X, y)
+         .text('LE LOCATAIRE', col2X, y);
+      
+      y += 20;
+      
+      doc.fontSize(7)
+         .font(FONTS.regular)
+         .fillColor(COLORS.secondary)
+         .text(`Date: ${formatDate(new Date())}`, col1X, y)
+         .text(`Date: ${formatDate(new Date())}`, col2X, y);
+      
+      y += 15;
+      
+      doc.fontSize(7)
+         .fillColor(COLORS.secondary)
+         .text('Signature:', col1X, y)
+         .text('Signature:', col2X, y);
+      
+      // Espace pour signature
+      y += 20;
+      
+      doc.save()
+         .moveTo(col1X, y + 40)
+         .lineTo(col1X + 180, y + 40)
+         .dash(2, 2)
+         .strokeColor(COLORS.border)
+         .stroke()
+         .restore();
+      
+      doc.save()
+         .moveTo(col2X, y + 40)
+         .lineTo(col2X + 180, y + 40)
+         .dash(2, 2)
+         .strokeColor(COLORS.border)
+         .stroke()
+         .restore();
+      
+      y += 60;
+      
+      y = drawAlert(doc, 'Ce contrat engage les deux parties pour la duree mentionnee. Toute modification doit faire l\'objet d\'un avenant signe.', 'info', y);
+      
+      drawFooter(doc);
+      doc.end();
+
+      stream.on('finish', () => {
+        resolve({ fileName, filePath, numeroContrat: numeroContrat.toString(), codeReference });
+      });
+
+      stream.on('error', reject);
+    } catch (error) {
+      reject(error);
+    }
+  });
+};
+

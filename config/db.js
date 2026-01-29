@@ -7,9 +7,12 @@ const pool = new Pool({
   ssl: {
     rejectUnauthorized: false
   },
-  max: 10, // Nombre maximum de connexions
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  // ✅ Ajout de timeouts plus généreux
+  connectionTimeoutMillis: 10000, // 10 secondes
+  idleTimeoutMillis: 30000, // 30 secondes
+  max: 20, // nombre max de connexions
+  // ✅ Retry sur erreur de connexion
+  query_timeout: 60000 // 60 secondes pour les requêtes
 });
 
 // Wrapper pour compatibilité avec le code MySQL existant
