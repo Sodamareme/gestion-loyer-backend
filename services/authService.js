@@ -193,3 +193,72 @@ exports.verifyToken = (token) => {
     throw new Error('Token invalide');
   }
 };
+// Fonction de changement d'email
+exports.changeEmail = async (req, res) => {
+  try {
+    const { newEmail, currentPassword } = req.body;
+    const userId = req.user.id;
+
+    console.log('📧 Tentative de changement d\'email pour user_id:', userId);
+
+    if (!newEmail || !currentPassword) {
+      return res.status(400).json({ error: 'Email et mot de passe requis' });
+    }
+
+    // Validation de l'email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(newEmail)) {
+      return res.status(400).json({ error: 'Email invalide' });
+    }
+
+    // Récupérer l'utilisateur
+    const result = await pool.execute(
+      'SELECT email, password FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (!result || !result[0] || result[0].length === 0) {
+      return res.status(404).json({ error: 'Utilisateur non trouvé' });
+    }
+
+    const user = result[0][0];
+
+    // Vérifier que le nouvel email est différent
+    if (user.email === newEmail) {
+      return res.status(400).json({ error: 'Le nouvel email est identique à l\'ancien' });
+    }
+
+    // Vérifier le mot de passe actuel
+    const validPassword = await bcrypt.compare(currentPassword, user.password);
+    if (!validPassword) {
+      return res.status(401).json({ error: 'Mot de passe incorrect' });
+    }
+
+    // Vérifier que l'email n'est pas déjà utilisé
+    const emailCheck = await pool.execute(
+      'SELECT id FROM users WHERE email = $1 AND id != $2',
+      [newEmail, userId]
+    );
+
+    if (emailCheck && emailCheck[0] && emailCheck[0].length > 0) {
+      return res.status(409).json({ error: 'Cet email est déjà utilisé par un autre compte' });
+    }
+
+    // Mettre à jour l'email
+    await pool.execute(
+      'UPDATE users SET email = $1 WHERE id = $2',
+      [newEmail, userId]
+    );
+
+    console.log('✅ Email changé avec succès:', { userId, oldEmail: user.email, newEmail });
+
+    res.json({ 
+      message: 'Email changé avec succès',
+      newEmail 
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur changement email:', error);
+    res.status(500).json({ error: 'Erreur lors du changement d\'email' });
+  }
+};

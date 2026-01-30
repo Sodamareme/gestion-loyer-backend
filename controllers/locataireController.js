@@ -513,3 +513,295 @@ exports.updateLocataire = async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 };
+
+
+// ✅ Récupérer tous les documents du locataire
+exports.getMesDocuments = async (req, res) => {
+  try {
+    const locataire_id = req.user?.locataire_id;
+    
+    if (!locataire_id) {
+      return res.status(403).json({ error: 'Aucun locataire associé à ce compte' });
+    }
+
+    console.log('🔍 Récupération documents pour locataire_id:', locataire_id);
+
+    // ✅ Requête adaptée à votre structure
+    const query = `
+      SELECT 
+        d.id,
+        d.type,
+        d.nom_fichier,
+        d.url,
+        d.contrat_id,
+        d.paiement_id,
+        d.mois_concerne,
+        d.montant,
+        d.created_at as date_creation,
+        b.adresse as bien_adresse
+      FROM documents d
+      INNER JOIN contrats c ON d.contrat_id = c.id
+      LEFT JOIN biens b ON c.bien_id = b.id
+      WHERE c.locataire_id = $1
+      ORDER BY d.created_at DESC
+    `;
+
+    const result = await pool.query(query, [locataire_id]);
+
+    console.log('✅ Documents trouvés:', result.rows.length);
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error('❌ Erreur récupération documents locataire:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// 📊 Récupérer les statistiques des documents
+exports.getStatsDocuments = async (req, res) => {
+  try {
+    const locataire_id = req.user?.locataire_id;
+    
+    if (!locataire_id) {
+      return res.status(403).json({ error: 'Aucun locataire associé à ce compte' });
+    }
+
+    const query = `
+      SELECT 
+        d.type_document,
+        COUNT(*) as nombre,
+        MAX(d.date_generation) as dernier_document
+      FROM documents d
+      INNER JOIN contrats c ON d.contrat_id = c.id
+      WHERE c.locataire_id = $1
+      GROUP BY d.type_document
+      ORDER BY nombre DESC
+    `;
+    
+    const [rows] = await pool.execute(query, [locataire_id]);
+    
+    res.json(rows);
+  } catch (error) {
+    console.error('❌ Erreur récupération stats documents:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// 📥 Télécharger un document
+exports.downloadDocument = async (req, res) => {
+  try {
+    const locataire_id = req.user?.locataire_id;
+    const document_id = Number(req.params.id);
+    
+    if (!locataire_id) {
+      return res.status(403).json({ error: 'Aucun locataire associé à ce compte' });
+    }
+
+    if (!document_id || isNaN(document_id)) {
+      return res.status(400).json({ error: 'ID de document invalide' });
+    }
+
+    // Vérifier que le document appartient au locataire
+    const query = `
+      SELECT d.*, c.locataire_id
+      FROM documents d
+      INNER JOIN contrats c ON d.contrat_id = c.id
+      WHERE d.id = $1 AND c.locataire_id = $2
+    `;
+    
+    const [[document]] = await pool.execute(query, [document_id, locataire_id]);
+
+    if (!document) {
+      return res.status(404).json({ error: 'Document non trouvé ou non autorisé' });
+    }
+
+    // Construire le chemin du fichier
+    const filePath = path.join(__dirname, '..', document.chemin_fichier);
+
+    // Vérifier que le fichier existe
+    try {
+      await fs.access(filePath);
+    } catch (err) {
+      console.error('❌ Fichier introuvable:', filePath);
+      return res.status(404).json({ error: 'Fichier introuvable sur le serveur' });
+    }
+
+    // Définir les headers pour le téléchargement
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${document.nom_fichier}"`);
+
+    // Envoyer le fichier
+    res.download(filePath, document.nom_fichier, (err) => {
+      if (err) {
+        console.error('❌ Erreur téléchargement:', err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Erreur lors du téléchargement' });
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur téléchargement document:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// 🔍 Récupérer les détails d'un document
+exports.getDocumentDetails = async (req, res) => {
+  try {
+    const locataire_id = req.user?.locataire_id;
+    const document_id = Number(req.params.id);
+    
+    if (!locataire_id) {
+      return res.status(403).json({ error: 'Aucun locataire associé à ce compte' });
+    }
+
+    if (!document_id || isNaN(document_id)) {
+      return res.status(400).json({ error: 'ID de document invalide' });
+    }
+
+    // Récupérer les détails du document
+    const query = `
+      SELECT 
+        d.*,
+        c.montant_loyer,
+        c.date_debut,
+        c.date_fin,
+        b.adresse as bien_adresse,
+        b.type as bien_type,
+        l.nom as locataire_nom,
+        l.prenom as locataire_prenom
+      FROM documents d
+      INNER JOIN contrats c ON d.contrat_id = c.id
+      INNER JOIN biens b ON c.bien_id = b.id
+      INNER JOIN locataires l ON c.locataire_id = l.id
+      WHERE d.id = $1 AND c.locataire_id = $2
+    `;
+    
+    const [[document]] = await pool.execute(query, [document_id, locataire_id]);
+
+    if (!document) {
+      return res.status(404).json({ error: 'Document non trouvé ou non autorisé' });
+    }
+
+    res.json(document);
+  } catch (error) {
+    console.error('❌ Erreur récupération détails document:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// 📋 Récupérer les documents par type
+exports.getDocumentsByType = async (req, res) => {
+  try {
+    const locataire_id = req.user?.locataire_id;
+    const { type } = req.params;
+    
+    if (!locataire_id) {
+      return res.status(403).json({ error: 'Aucun locataire associé à ce compte' });
+    }
+
+    const validTypes = ['quittance', 'avis_echeance', 'contrat', 'quittance_caution', 'autre'];
+    if (!validTypes.includes(type)) {
+      return res.status(400).json({ error: 'Type de document invalide' });
+    }
+
+    const query = `
+      SELECT 
+        d.*,
+        c.montant_loyer,
+        b.adresse as bien_adresse
+      FROM documents d
+      INNER JOIN contrats c ON d.contrat_id = c.id
+      INNER JOIN biens b ON c.bien_id = b.id
+      WHERE c.locataire_id = $1 AND d.type_document = $2
+      ORDER BY d.date_generation DESC
+    `;
+    
+    const [rows] = await pool.execute(query, [locataire_id, type]);
+    
+    res.json(rows);
+  } catch (error) {
+    console.error('❌ Erreur récupération documents par type:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+exports.getMesContrats = async (req, res) => {
+  try {
+    const locataire_id = req.user?.locataire_id;
+    if (!locataire_id) {
+      return res.status(403).json({ error: 'Aucun locataire associé à ce compte' });
+    }
+
+    const query = `
+      SELECT 
+        c.id,
+        c.numero_contrat,
+        c.date_debut,
+        c.date_fin,
+        c.montant_loyer,
+        c.statut,
+        b.adresse AS bien_adresse,
+        b.type AS bien_type,
+        p.nom AS proprietaire_nom,
+        p.telephone AS proprietaire_tel
+      FROM contrats c
+      INNER JOIN biens b ON c.bien_id = b.id
+      INNER JOIN proprietaires p ON b.proprietaire_id = p.id
+      WHERE c.locataire_id = $1
+      ORDER BY c.date_debut DESC
+    `;
+
+    const [rows] = await pool.execute(query, [locataire_id]);
+    res.json(rows);
+
+  } catch (error) {
+    console.error('❌ Erreur récupération contrats locataire:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// 🔹 Récupérer le contrat actif du locataire
+exports.getMonContrat = async (req, res) => {
+  try {
+    const locataire_id = req.user?.locataire_id;
+    if (!locataire_id) {
+      return res.status(403).json({ error: 'Aucun locataire associé à ce compte' });
+    }
+
+    const query = `
+      SELECT 
+        c.id,
+        c.numero_contrat,
+        c.date_debut,
+        c.date_fin,
+        c.montant_loyer,
+        c.statut,
+        b.adresse AS bien_adresse,
+        b.type AS bien_type,
+        p.nom AS proprietaire_nom,
+        p.telephone AS proprietaire_tel
+      FROM contrats c
+      INNER JOIN biens b ON c.bien_id = b.id
+      INNER JOIN proprietaires p ON b.proprietaire_id = p.id
+      WHERE c.locataire_id = $1
+        AND c.statut = 'actif'
+      ORDER BY c.date_debut DESC
+      LIMIT 1
+    `;
+
+    const [rows] = await pool.execute(query, [locataire_id]);
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ error: 'Aucun contrat actif trouvé pour ce locataire' });
+    }
+
+    res.json(rows[0]);
+
+  } catch (error) {
+    console.error('❌ Erreur récupération contrat actif:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+module.exports = exports;

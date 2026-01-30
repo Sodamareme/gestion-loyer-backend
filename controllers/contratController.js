@@ -67,7 +67,22 @@ exports.createContrat = async (req, res) => {
     );
 
     await connection.commit();
-
+  try {
+    const pdfResult = await pdfController.generateContratAuto(contratId);
+    
+    res.status(201).json({
+      id: contratId,
+      message: 'Contrat créé avec succès et document PDF généré',
+      pdfUrl: pdfResult.url
+    });
+  } catch (pdfError) {
+    // Le contrat est créé même si le PDF échoue
+    res.status(201).json({
+      id: contratId,
+      message: 'Contrat créé avec succès (PDF en attente)',
+      warning: 'Le document PDF sera disponible prochainement'
+    });
+  }
     res.status(201).json({
       id: result[0].id,
       message: 'Contrat créé avec succès'
@@ -364,5 +379,20 @@ exports.getContrats = async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
+  }
+};
+exports.genererPdfContrat = async (req, res) => {
+  const contratId = Number(req.params.id);
+  
+  const pdfResult = await pdfController.generateContratAuto(contratId);
+  
+  if (pdfResult.success) {
+    res.json({
+      message: 'PDF du contrat généré avec succès',
+      url: pdfResult.url,
+      numeroContrat: pdfResult.numeroContrat
+    });
+  } else {
+    res.status(500).json({ error: 'Erreur génération PDF' });
   }
 };

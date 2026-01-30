@@ -173,5 +173,55 @@ router.post('/create-agence-account', authenticate, isAdmin, async (req, res) =>
     });
   }
 });
+// Route pour changer le mot de passe
+router.put('/change-password', authenticate, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.user.id;
 
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Ancien et nouveau mot de passe requis' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'Le nouveau mot de passe doit contenir au moins 6 caractères' });
+    }
+
+    const pool = require('../config/db');
+    const result = await pool.execute(
+      'SELECT password FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (!result || !result[0] || result[0].length === 0) {
+      return res.status(404).json({ error: 'Utilisateur non trouvé' });
+    }
+
+    const user = result[0][0];
+
+    const bcrypt = require('bcrypt');
+    const validPassword = await bcrypt.compare(currentPassword, user.password);
+    if (!validPassword) {
+      return res.status(401).json({ error: 'Mot de passe actuel incorrect' });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await pool.execute(
+      'UPDATE users SET password = $1 WHERE id = $2',
+      [hashedPassword, userId]
+    );
+
+    console.log('✅ Mot de passe changé pour user_id:', userId);
+
+    res.json({ message: 'Mot de passe changé avec succès' });
+
+  } catch (error) {
+    console.error('❌ Erreur changement mot de passe:', error);
+    res.status(500).json({ error: 'Erreur lors du changement de mot de passe' });
+  }
+});
+
+// Route pour changer l'email
+router.put('/change-email', authenticate, authService.changeEmail);
 module.exports = router;

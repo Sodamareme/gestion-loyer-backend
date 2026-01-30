@@ -2,7 +2,7 @@ const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
 const { generateNumeroDocument } = require('./numeroService');
-
+const DOCUMENTS_DIR = path.join(__dirname, '../documents');
 // ========================================
 // CONFIGURATION PROFESSIONNELLE
 // ========================================
@@ -302,7 +302,37 @@ const drawFooter = (doc) => {
 // ========================================
 // QUITTANCE DE LOYER
 // ========================================
+// Créer le dossier documents s'il n'existe pas
+if (!fs.existsSync(DOCUMENTS_DIR)) {
+  fs.mkdirSync(DOCUMENTS_DIR, { recursive: true });
+}
 
+// ✅ FONCTION UTILITAIRE: Enregistrer un document dans la base de données
+const enregistrerDocument = async (type, nomFichier, url, contratId, paiementId = null, moisConcerne = null, montant = null) => {
+  try {
+    const query = `
+      INSERT INTO documents (type, nom_fichier, url, contrat_id, paiement_id, mois_concerne, montant, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+      RETURNING id
+    `;
+
+    const result = await pool.query(query, [
+      type,
+      nomFichier,
+      url,
+      contratId,
+      paiementId,
+      moisConcerne,
+      montant
+    ]);
+
+    console.log('✅ Document enregistré en BDD:', result.rows[0].id);
+    return result.rows[0].id;
+  } catch (error) {
+    console.error('❌ Erreur enregistrement document:', error);
+    throw error;
+  }
+};
 exports.generateQuittance = async (paiement) => {
   return new Promise(async (resolve, reject) => {
     try {
@@ -962,4 +992,12 @@ exports.generateContrat = async (contrat) => {
     }
   });
 };
+module.exports = {
+  generateContrat: exports.generateContrat,
+  generateQuittance: exports.generateQuittance,
+  generateAvisEcheance: exports.generateAvisEcheance,
+  generateQuittanceCaution: exports.generateQuittanceCaution,
+  enregistrerDocument
+};
+
 

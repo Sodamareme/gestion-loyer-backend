@@ -148,6 +148,10 @@ router.post('/envoyer-rappel', authenticate, isAdmin, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+// Ajouter cette route dans routes/pdfRoutes.js
+
+// Générer un contrat de location
+router.post('/contrat/:contrat_id', authenticate, pdfController.generateContrat);
 
 router.post('/quittance/:paiement_id', pdfController.generateQuittance);
 router.post('/avis-echeance/:contrat_id', pdfController.generateAvisEcheance);
