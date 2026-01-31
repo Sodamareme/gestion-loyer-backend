@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { authenticateToken, requireRole } = require('../middleware/auth');
-const agenceContratController = require('../controllers/Agencecontratcontroller');
+const agenceContratController = require('../controllers/agenceContratController');
 const agencePDFController = require('../controllers/agencePDFController');
 const agenceEcheancesController = require('../controllers/agenceEcheancesController');
 
