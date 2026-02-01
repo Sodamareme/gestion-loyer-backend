@@ -9,16 +9,20 @@ exports.login = async (email, password) => {
   try {
     console.log('🔍 Recherche utilisateur:', email);
 
-    // Récupérer l'utilisateur avec toutes ses informations
+    // 🔥 CORRECTION: Récupérer l'utilisateur avec TOUTES ses informations (y compris agence)
     const result = await pool.query(
       `SELECT u.*, 
               l.id as locataire_id, 
               l.nom as locataire_nom,
               p.id as proprietaire_id,
-              p.nom as proprietaire_nom
+              p.nom as proprietaire_nom,
+              a.id as agence_id,
+              a.nom as agence_nom,
+              a.code as agence_code
        FROM users u
        LEFT JOIN locataires l ON u.locataire_id = l.id
        LEFT JOIN proprietaires p ON u.proprietaire_id = p.id
+       LEFT JOIN agences a ON u.agence_id = a.id
        WHERE u.email = $1`,
       [email]
     );
@@ -34,7 +38,10 @@ exports.login = async (email, password) => {
       email: user.email,
       role: user.role,
       locataire_id: user.locataire_id,
-      proprietaire_id: user.proprietaire_id
+      proprietaire_id: user.proprietaire_id,
+      agence_id: user.agence_id,
+      agence_nom: user.agence_nom,
+      agence_code: user.agence_code
     });
 
     // Vérifier le mot de passe
@@ -56,17 +63,23 @@ exports.login = async (email, password) => {
 
     console.log('✅ Token généré pour:', email);
 
-    // Retourner le token et les infos utilisateur
+    // 🔥 CORRECTION: Retourner TOUTES les données (y compris agence)
     return {
       token,
       user: {
         id: user.id,
         email: user.email,
         role: user.role,
-        locataire_id: user.locataire_id,
-        locataire_nom: user.locataire_nom,
-        proprietaire_id: user.proprietaire_id,
-        proprietaire_nom: user.proprietaire_nom
+        // Données locataire
+        locataire_id: user.locataire_id || null,
+        locataire_nom: user.locataire_nom || null,
+        // Données propriétaire
+        proprietaire_id: user.proprietaire_id || null,
+        proprietaire_nom: user.proprietaire_nom || null,
+        // 🆕 Données agence
+        agence_id: user.agence_id || null,
+        agence_nom: user.agence_nom || null,
+        agence_code: user.agence_code || null
       }
     };
   } catch (error) {
