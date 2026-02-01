@@ -24,16 +24,39 @@ router.post('/login', async (req, res) => {
     const result = await authService.login(email, password);
     
     console.log('✅ Connexion réussie pour:', email);
-    console.log('📦 Données utilisateur:', {
+    console.log('📦 Données utilisateur complètes:', {
       id: result.user.id,
+      email: result.user.email,
       role: result.user.role,
       locataire_id: result.user.locataire_id,
+      locataire_nom: result.user.locataire_nom,
       proprietaire_id: result.user.proprietaire_id,
+      proprietaire_nom: result.user.proprietaire_nom,
       agence_id: result.user.agence_id,
-      agence_nom: result.user.agence_nom
+      agence_nom: result.user.agence_nom,
+      agence_code: result.user.agence_code
     });
     
-    res.json(result);
+    // 🔥 IMPORTANT: S'assurer que TOUTES les données sont retournées
+    // Le frontend n'aura plus besoin d'un second appel API
+    res.json({
+      token: result.token,
+      user: {
+        id: result.user.id,
+        email: result.user.email,
+        role: result.user.role,
+        // Données locataire
+        locataire_id: result.user.locataire_id || null,
+        locataire_nom: result.user.locataire_nom || null,
+        // Données propriétaire
+        proprietaire_id: result.user.proprietaire_id || null,
+        proprietaire_nom: result.user.proprietaire_nom || null,
+        // Données agence
+        agence_id: result.user.agence_id || null,
+        agence_nom: result.user.agence_nom || null,
+        agence_code: result.user.agence_code || null
+      }
+    });
     
   } catch (error) {
     console.error('❌ Erreur login:', error.message);
@@ -45,7 +68,6 @@ router.post('/login', async (req, res) => {
     });
   }
 });
-
 // ✅ Vérifier le token
 router.get('/verify', authenticate, (req, res) => {
   console.log('✅ Token vérifié pour:', req.user.email);
