@@ -6,13 +6,15 @@ const bcrypt = require('bcrypt');
 const pool = require('../config/db');
 const nodemailer = require('nodemailer');
 
-// Configuration upload pour carte d'identité
+// Configuration upload pour carte d'identité (recto et verso)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, 'uploads/cni/');
   },
   filename: (req, file, cb) => {
-    const uniqueName = `cni-loc-${Date.now()}-${Math.round(Math.random() * 1E9)}${path.extname(file.originalname)}`;
+    // Ajouter recto ou verso dans le nom du fichier
+    const side = file.fieldname === 'carte_identite_recto' ? 'recto' : 'verso';
+    const uniqueName = `cni-loc-${side}-${Date.now()}-${Math.round(Math.random() * 1E9)}${path.extname(file.originalname)}`;
     cb(null, uniqueName);
   }
 });
@@ -80,8 +82,11 @@ const sendCredentialsEmail = async (email, prenom, nom, password) => {
   await transporter.sendMail(mailOptions);
 };
 
-// Route d'inscription locataire
-router.post('/inscription', upload.single('carte_identite'), async (req, res) => {
+// Route d'inscription locataire avec upload recto/verso
+router.post('/inscription', upload.fields([
+  { name: 'carte_identite_recto', maxCount: 1 },
+  { name: 'carte_identite_verso', maxCount: 1 }
+]), async (req, res) => {
   const connection = await pool.getConnection();
   
   try {
@@ -132,22 +137,30 @@ router.post('/inscription', upload.single('carte_identite'), async (req, res) =>
       });
     }
 
-    const carte_identite = req.file ? req.file.filename : null;
+    // Récupérer les fichiers uploadés
+    const files = req.files;
+    const carte_identite_recto = files && files['carte_identite_recto'] && files['carte_identite_recto'][0] 
+      ? files['carte_identite_recto'][0].filename 
+      : null;
+    const carte_identite_verso = files && files['carte_identite_verso'] && files['carte_identite_verso'][0]
+      ? files['carte_identite_verso'][0].filename 
+      : null;
 
-    if (!carte_identite) {
+    // Vérifier que les deux photos sont présentes
+    if (!carte_identite_recto || !carte_identite_verso) {
       await connection.rollback();
       return res.status(400).json({ 
-        error: 'La carte d\'identité est obligatoire' 
+        error: 'Les deux photos de la carte d\'identité (recto et verso) sont obligatoires' 
       });
     }
 
-    // 🔧 CORRECTION: Garder nom et prenom séparés (pas de nomComplet)
+    // Insérer dans la base de données avec les deux fichiers
     const [resultLocataire] = await connection.execute(
       `INSERT INTO locataires 
-       (nom, prenom, date_naissance, lieu_naissance, numero_cni, telephone, email, type, carte_identite) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+       (nom, prenom, date_naissance, lieu_naissance, numero_cni, telephone, email, type, carte_identite_recto, carte_identite_verso) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
        RETURNING id`,
-      [nom, prenom, date_naissance, lieu_naissance, numero_cni, telephone, email, type || 'particulier', carte_identite]
+      [nom, prenom, date_naissance, lieu_naissance, numero_cni, telephone, email, type || 'particulier', carte_identite_recto, carte_identite_verso]
     );
 
     const locataireId = resultLocataire[0].id;

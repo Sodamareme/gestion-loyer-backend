@@ -9,10 +9,15 @@ exports.generateQuittanceAgence = async (req, res) => {
     return res.status(400).json({ error: 'ID de paiement invalide' });
   }
 
+  const client = await pool.connect();
+
   try {
+    await client.query('BEGIN');
+
     const agence_id = req.user?.agence_id;
     
     if (!agence_id) {
+      await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Aucune agence associée à ce compte' });
     }
 
@@ -20,6 +25,8 @@ exports.generateQuittanceAgence = async (req, res) => {
     const query = `
       SELECT 
         p.*,
+        c.id as contrat_id,
+        c.locataire_id,
         c.montant_loyer,
         c.charges_structurelles,
         c.charges_periode,
@@ -42,13 +49,16 @@ exports.generateQuittanceAgence = async (req, res) => {
       WHERE p.id = $1 AND c.agence_id = $2
     `;
     
-    const [[paiement]] = await pool.execute(query, [paiementId, agence_id]);
+    const { rows: paiementRows } = await client.query(query, [paiementId, agence_id]);
 
-    if (!paiement) {
+    if (!paiementRows || paiementRows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ 
         error: 'Paiement introuvable ou non autorisé pour cette agence' 
       });
     }
+
+    const paiement = paiementRows[0];
 
     console.log('📄 Génération quittance pour paiement:', paiementId, 'agence:', agence_id);
 
@@ -56,6 +66,25 @@ exports.generateQuittanceAgence = async (req, res) => {
     const result = await pdfService.generateQuittance(paiement);
 
     console.log('✅ Quittance générée:', result.fileName);
+
+    // ✅ AJOUTER : Sauvegarder dans la table documents
+    await client.query(`
+      INSERT INTO documents 
+      (type, nom_fichier, url, contrat_id, paiement_id, mois_concerne, montant, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+    `, [
+      'quittance',
+      result.fileName,
+      `/documents/${result.fileName}`,
+      paiement.contrat_id,
+      paiementId,
+      paiement.mois_concerne,
+      paiement.montant_paye
+    ]);
+
+    console.log('✅ Document enregistré dans la base de données');
+
+    await client.query('COMMIT');
 
     res.json({
       success: true,
@@ -66,10 +95,13 @@ exports.generateQuittanceAgence = async (req, res) => {
     });
 
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('❌ Erreur génération quittance agence:', error);
     res.status(500).json({ 
       error: error.message || 'Erreur lors de la génération de la quittance' 
     });
+  } finally {
+    client.release();
   }
 };
 
@@ -87,10 +119,15 @@ exports.generateAvisEcheanceAgence = async (req, res) => {
     return res.status(400).json({ error: 'Le mois concerné est requis' });
   }
 
+  const client = await pool.connect();
+
   try {
+    await client.query('BEGIN');
+
     const agence_id = req.user?.agence_id;
     
     if (!agence_id) {
+      await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Aucune agence associée à ce compte' });
     }
 
@@ -116,13 +153,16 @@ exports.generateAvisEcheanceAgence = async (req, res) => {
       WHERE c.id = $1 AND c.agence_id = $2
     `;
     
-    const [[contrat]] = await pool.execute(query, [contratId, agence_id]);
+    const { rows: contratRows } = await client.query(query, [contratId, agence_id]);
 
-    if (!contrat) {
+    if (!contratRows || contratRows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ 
         error: 'Contrat introuvable ou non autorisé pour cette agence' 
       });
     }
+
+    const contrat = contratRows[0];
 
     console.log('📄 Génération avis échéance pour contrat:', contratId, 'mois:', mois_concerne);
 
@@ -130,6 +170,31 @@ exports.generateAvisEcheanceAgence = async (req, res) => {
     const result = await pdfService.generateAvisEcheance(contrat, mois_concerne);
 
     console.log('✅ Avis d\'échéance généré:', result.fileName);
+
+    // ✅ AJOUTER : Sauvegarder dans la table documents
+    const montantLoyer = Number(contrat.montant_loyer || 0);
+    const charges = Number(contrat.charges_structurelles || 0) + Number(contrat.charges_periode || 0);
+    const eau = Number(contrat.montant_eau || 0);
+    const internet = Number(contrat.montant_internet || 0);
+    const tva = Number(contrat.tva || 0);
+    const montantTotal = montantLoyer + charges + eau + internet + tva;
+
+    await client.query(`
+      INSERT INTO documents 
+      (type, nom_fichier, url, contrat_id, mois_concerne, montant, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, NOW())
+    `, [
+      'avis_echeance',
+      result.fileName,
+      `/documents/${result.fileName}`,
+      contratId,
+      mois_concerne,
+      montantTotal
+    ]);
+
+    console.log('✅ Document enregistré dans la base de données');
+
+    await client.query('COMMIT');
 
     res.json({
       success: true,
@@ -140,10 +205,13 @@ exports.generateAvisEcheanceAgence = async (req, res) => {
     });
 
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('❌ Erreur génération avis échéance agence:', error);
     res.status(500).json({ 
       error: error.message || 'Erreur lors de la génération de l\'avis d\'échéance' 
     });
+  } finally {
+    client.release();
   }
 };
 
@@ -161,10 +229,15 @@ exports.generateQuittanceCautionAgence = async (req, res) => {
     return res.status(400).json({ error: 'Le montant de la caution est requis et doit être positif' });
   }
 
+  const client = await pool.connect();
+
   try {
+    await client.query('BEGIN');
+
     const agence_id = req.user?.agence_id;
     
     if (!agence_id) {
+      await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Aucune agence associée à ce compte' });
     }
 
@@ -190,13 +263,16 @@ exports.generateQuittanceCautionAgence = async (req, res) => {
       WHERE c.id = $1 AND c.agence_id = $2
     `;
     
-    const [[contrat]] = await pool.execute(query, [contratId, agence_id]);
+    const { rows: contratRows } = await client.query(query, [contratId, agence_id]);
 
-    if (!contrat) {
+    if (!contratRows || contratRows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ 
         error: 'Contrat introuvable ou non autorisé pour cette agence' 
       });
     }
+
+    const contrat = contratRows[0];
 
     console.log('📄 Génération quittance caution pour contrat:', contratId, 'montant:', montant_caution);
 
@@ -204,6 +280,23 @@ exports.generateQuittanceCautionAgence = async (req, res) => {
     const result = await pdfService.generateQuittanceCaution(contrat, montant_caution);
 
     console.log('✅ Quittance de caution générée:', result.fileName);
+
+    // ✅ AJOUTER : Sauvegarder dans la table documents
+    await client.query(`
+      INSERT INTO documents 
+      (type, nom_fichier, url, contrat_id, montant, created_at)
+      VALUES ($1, $2, $3, $4, $5, NOW())
+    `, [
+      'quittance_caution',
+      result.fileName,
+      `/documents/${result.fileName}`,
+      contratId,
+      montant_caution
+    ]);
+
+    console.log('✅ Document enregistré dans la base de données');
+
+    await client.query('COMMIT');
 
     res.json({
       success: true,
@@ -214,10 +307,13 @@ exports.generateQuittanceCautionAgence = async (req, res) => {
     });
 
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('❌ Erreur génération quittance caution agence:', error);
     res.status(500).json({ 
       error: error.message || 'Erreur lors de la génération de la quittance de caution' 
     });
+  } finally {
+    client.release();
   }
 };
 
@@ -246,13 +342,12 @@ exports.getPaiementsAgence = async (req, res) => {
       ORDER BY p.date_paiement DESC, p.mois_concerne DESC
     `;
     
-    const [rows] = await pool.execute(query, [agence_id]);
+    const { rows } = await pool.query(query, [agence_id]);
     res.json(rows);
   } catch (error) {
     console.error('❌ Erreur récupération paiements agence:', error);
     res.status(500).json({ error: error.message });
   }
 };
-
 
 module.exports = exports;

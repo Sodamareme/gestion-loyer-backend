@@ -4,13 +4,15 @@ const multer = require('multer');
 const path = require('path');
 const pool = require('../config/db');
 
-// Configuration upload pour carte d'identité
+// Configuration upload pour carte d'identité (recto et verso)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, 'uploads/cni/');
   },
   filename: (req, file, cb) => {
-    const uniqueName = `cni-prop-${Date.now()}-${Math.round(Math.random() * 1E9)}${path.extname(file.originalname)}`;
+    // Ajouter recto ou verso dans le nom du fichier
+    const side = file.fieldname === 'carte_identite_recto' ? 'recto' : 'verso';
+    const uniqueName = `cni-prop-${side}-${Date.now()}-${Math.round(Math.random() * 1E9)}${path.extname(file.originalname)}`;
     cb(null, uniqueName);
   }
 });
@@ -30,8 +32,11 @@ const upload = multer({
   }
 });
 
-// Route d'inscription propriétaire (EN ATTENTE DE VALIDATION)
-router.post('/inscription', upload.single('carte_identite'), async (req, res) => {
+// Route d'inscription propriétaire (EN ATTENTE DE VALIDATION) avec upload recto/verso
+router.post('/inscription', upload.fields([
+  { name: 'carte_identite_recto', maxCount: 1 },
+  { name: 'carte_identite_verso', maxCount: 1 }
+]), async (req, res) => {
   const connection = await pool.getConnection();
   
   try {
@@ -82,22 +87,29 @@ router.post('/inscription', upload.single('carte_identite'), async (req, res) =>
       });
     }
 
-    const carte_identite = req.file ? req.file.filename : null;
+    // Récupérer les fichiers uploadés
+    const files = req.files;
+    const carte_identite_recto = files && files['carte_identite_recto'] && files['carte_identite_recto'][0] 
+      ? files['carte_identite_recto'][0].filename 
+      : null;
+    const carte_identite_verso = files && files['carte_identite_verso'] && files['carte_identite_verso'][0]
+      ? files['carte_identite_verso'][0].filename 
+      : null;
 
-    if (!carte_identite) {
+    // Vérifier que les deux photos sont présentes
+    if (!carte_identite_recto || !carte_identite_verso) {
       await connection.rollback();
       return res.status(400).json({ 
-        error: 'La carte d\'identité est obligatoire' 
+        error: 'Les deux photos de la carte d\'identité (recto et verso) sont obligatoires' 
       });
     }
 
-    // Créer le propriétaire avec statut EN ATTENTE
-    // 🔧 CORRECTION: Ne pas créer de nomComplet, garder nom et prenom séparés
+    // Créer le propriétaire avec statut EN ATTENTE et les deux fichiers
     await connection.execute(
       `INSERT INTO proprietaires 
-       (nom, prenom, date_naissance, lieu_naissance, numero_cni, telephone, email, adresse, carte_identite, statut_validation, date_inscription) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
-      [nom, prenom, date_naissance, lieu_naissance, numero_cni, telephone, email, adresse || null, carte_identite, 'en_attente']
+       (nom, prenom, date_naissance, lieu_naissance, numero_cni, telephone, email, adresse, carte_identite_recto, carte_identite_verso, statut_validation, date_inscription) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())`,
+      [nom, prenom, date_naissance, lieu_naissance, numero_cni, telephone, email, adresse || null, carte_identite_recto, carte_identite_verso, 'en_attente']
     );
 
     await connection.commit();
